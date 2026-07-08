@@ -1,0 +1,23 @@
+{
+  "name": "fortiswitch-management-backend",
+  "version": "1.0.0",
+  "description": "Backend service for managing a fleet of FortiSwitch devices: SSH automation, PoE/VLAN/MAC visibility, ARP/mDNS discovery, desired-state config validation and git-versioned backups.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "mock-switch": "node src/ssh/mockSwitchServer.js",
+    "seed-dev": "node src/seedDev.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.0",
+    "js-yaml": "^4.1.0",
+    "ssh2": "^1.15.0",
+    "uuid": "^9.0.1"
+  }
+}

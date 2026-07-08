@@ -1,0 +1,29 @@
+# Desired-state template for a standard wiring-closet PoE access switch.
+# Rules are evaluated top-to-bottom per port; the first matching rule wins.
+name: default
+description: Standard 24-port PoE access switch (uplinks + unused ports + edge ports)
+
+vlans:
+  required: [1, 10, 20, 30, 99]
+
+rules:
+  - match: "uplink"
+    matchBy: description
+    expect:
+      nativeVlan: 99
+      poeEnabled: false
+      adminStatus: up
+
+  - match: "^port(1[3-9]|2[0-2])$"
+    matchBy: portName
+    expect:
+      adminStatus: up
+      poeEnabled: true
+      nativeVlanIn: [10]
+
+  - match: ".*"
+    matchBy: portName
+    expect:
+      adminStatus: up
+      poeEnabled: true
+      nativeVlanIn: [10, 20, 30]

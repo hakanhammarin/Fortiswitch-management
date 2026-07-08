@@ -1,0 +1,38 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "4000:4000"
+    environment:
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?set a 32-byte hex key, e.g. via `openssl rand -hex 32`}
+      PORT: 4000
+      POLL_INTERVAL_MS: 30000
+      # Point at a local read-only checkout of hakanhammarin/10mila_monitoring to enable import.
+      MONITORING_REPO_PATH: /monitoring-repo
+    volumes:
+      - backend_data:/app/data
+      # To enable the read-only 10mila_monitoring import feature, uncomment and point this at
+      # a local checkout of https://github.com/hakanhammarin/10mila_monitoring:
+      # - /path/to/10mila_monitoring:/monitoring-repo:ro
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+  # Optional: three simulated FortiSwitches for demoing without real hardware.
+  # Run with `docker compose --profile demo up`.
+  mock-switches:
+    build: ./backend
+    profiles: ["demo"]
+    command: ["node", "src/ssh/mockSwitchServer.js"]
+    ports:
+      - "2201-2203:2201-2203"
+    environment:
+      MOCK_SWITCH_USER: admin
+      MOCK_SWITCH_PASSWORD: admin123
+
+volumes:
+  backend_data:

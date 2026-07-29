@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../api/client.js';
 
 export default function AddSwitchModal({ onClose, onCreated, initial = {} }) {
@@ -10,8 +10,13 @@ export default function AddSwitchModal({ onClose, onCreated, initial = {} }) {
     password: '',
     roleTemplate: initial.roleTemplate || 'default',
   });
+  const [templates, setTemplates] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.listTemplates().then(setTemplates);
+  }, []);
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -56,7 +61,14 @@ export default function AddSwitchModal({ onClose, onCreated, initial = {} }) {
             required
           />
           <label>Role template</label>
-          <input value={form.roleTemplate} onChange={(e) => set('roleTemplate', e.target.value)} />
+          <select value={form.roleTemplate} onChange={(e) => set('roleTemplate', e.target.value)}>
+            {!templates.some((t) => t.name === form.roleTemplate) && (
+              <option value={form.roleTemplate}>{form.roleTemplate} (not found)</option>
+            )}
+            {templates.map((t) => (
+              <option key={t.id} value={t.name}>{t.name}</option>
+            ))}
+          </select>
 
           {error && <div className="error-text">{error}</div>}
 

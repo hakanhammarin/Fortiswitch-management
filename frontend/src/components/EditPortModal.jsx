@@ -8,6 +8,19 @@ export default function EditPortModal({ switchId, port, vlans, onClose, onSaved 
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  // `vlans` only lists formal `config switch vlan` objects, which some
+  // switches never create (e.g. a flat-trunk FS108 with VLANs defined only
+  // as `allowed-vlans` tags + routed L3 sub-interfaces). Fall back to this
+  // port's own allowed-vlans - and always keep its current native VLAN
+  // selectable even if neither source lists it. VLAN 1 is FortiSwitch's
+  // default/untagged VLAN and is independent of allowed-vlans (every port on
+  // a real fleet here has native-vlan 1 while allowed-vlans is [100,200,300]
+  // - native-vlan isn't required to be a member of allowed-vlans), so it's
+  // always offered too even if a port's currently on a different native VLAN.
+  const namesById = Object.fromEntries(vlans.map((v) => [v.id, v.name]));
+  const vlanIds = new Set([1, ...(port.allowedVlans || []), ...vlans.map((v) => v.id), port.native_vlan]);
+  const vlanOptions = [...vlanIds].sort((a, b) => a - b).map((id) => ({ id, name: namesById[id] || `vlan${id}` }));
+
   async function submit(e) {
     e.preventDefault();
     setBusy(true);
@@ -43,7 +56,7 @@ export default function EditPortModal({ switchId, port, vlans, onClose, onSaved 
         <form onSubmit={submit}>
           <label>Native VLAN</label>
           <select value={nativeVlan} onChange={(e) => setNativeVlan(e.target.value)}>
-            {vlans.map((v) => (
+            {vlanOptions.map((v) => (
               <option key={v.id} value={v.id}>
                 {v.id} - {v.name}
               </option>

@@ -20,6 +20,7 @@ export const api = {
   updateSwitch: (id, data) => request(`/switches/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteSwitch: (id) => request(`/switches/${id}`, { method: 'DELETE' }),
   pollSwitch: (id) => request(`/switches/${id}/poll`, { method: 'POST' }),
+  renameSwitch: (id, name, user) => request(`/switches/${id}/rename`, { method: 'POST', body: JSON.stringify({ name, user }) }),
   listPorts: (id) => request(`/switches/${id}/ports`),
   listVlans: (id) => request(`/switches/${id}/vlans`),
   listAuditLog: (id) => request(`/switches/${id}/audit-log`),
@@ -32,6 +33,7 @@ export const api = {
   saveTemplate: (data) => request('/templates', { method: 'POST', body: JSON.stringify(data) }),
   complianceAll: () => request('/templates/compliance'),
   complianceFor: (switchId) => request(`/templates/compliance/${switchId}`),
+  enforceCompliance: (switchId, user) => request(`/templates/enforce/${switchId}`, { method: 'POST', body: JSON.stringify({ user }) }),
 
   backupHistory: (switchId) => request(`/backups/${switchId}`),
   backupConfig: (switchId, commitHash) =>

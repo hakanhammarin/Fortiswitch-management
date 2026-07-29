@@ -2,6 +2,7 @@ import { Router } from 'express';
 import yaml from 'js-yaml';
 import { listTemplates, upsertTemplate } from '../repositories.js';
 import { validateSwitch, validateAllSwitches } from '../services/desiredStateService.js';
+import { enforceSwitch } from '../services/configService.js';
 import { listSwitches } from '../repositories.js';
 
 export const templatesRouter = Router();
@@ -28,6 +29,16 @@ templatesRouter.get('/compliance', (req, res) => {
 templatesRouter.get('/compliance/:switchId', (req, res) => {
   try {
     res.json(validateSwitch(req.params.switchId, req.query.template || null));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+templatesRouter.post('/enforce/:switchId', async (req, res) => {
+  try {
+    const user = req.header('X-User') || req.body?.user || 'ui-user';
+    const result = await enforceSwitch(req.params.switchId, { user });
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

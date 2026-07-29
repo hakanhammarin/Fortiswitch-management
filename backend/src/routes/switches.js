@@ -11,6 +11,7 @@ import {
   listAuditLog,
 } from '../repositories.js';
 import { pollSwitch } from '../services/switchService.js';
+import { renameSwitch } from '../services/configService.js';
 import { listDiscovery } from '../repositories.js';
 
 export const switchesRouter = Router();
@@ -48,6 +49,16 @@ switchesRouter.delete('/:id', (req, res) => {
 switchesRouter.post('/:id/poll', async (req, res) => {
   const result = await pollSwitch(req.params.id);
   res.json(result);
+});
+
+switchesRouter.post('/:id/rename', async (req, res) => {
+  try {
+    const user = req.header('X-User') || req.body?.user || 'ui-user';
+    const result = await renameSwitch(req.params.id, req.body.name, { user });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 switchesRouter.get('/:id/ports', (req, res) => {

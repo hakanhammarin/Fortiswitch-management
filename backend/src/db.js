@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS switch_status (
   last_poll_at TEXT,
   last_error TEXT,
   system_info_json TEXT,
-  vlans_json TEXT
+  vlans_json TEXT,
+  global_config_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ports (
@@ -48,18 +49,27 @@ CREATE TABLE IF NOT EXISTS ports (
   poe_watts REAL,
   poe_class TEXT,
   description TEXT,
+  stp_state TEXT,
+  edge_port TEXT,
+  lldp_profile TEXT,
+  speed_config TEXT,
+  lldp_neighbor_device TEXT,
+  lldp_neighbor_port_id TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (switch_id, port_name)
 );
 
+-- vlan is part of the key: a routed trunk port (e.g. a switch's own "internal"
+-- management interface) legitimately shows the same MAC once per VLAN it
+-- carries, not once per port.
 CREATE TABLE IF NOT EXISTS mac_entries (
   switch_id TEXT NOT NULL REFERENCES switches(id) ON DELETE CASCADE,
   port_name TEXT NOT NULL,
   mac_address TEXT NOT NULL,
-  vlan INTEGER,
+  vlan INTEGER NOT NULL,
   type TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (switch_id, port_name, mac_address)
+  PRIMARY KEY (switch_id, port_name, mac_address, vlan)
 );
 
 CREATE TABLE IF NOT EXISTS discovery_cache (
@@ -98,6 +108,23 @@ CREATE TABLE IF NOT EXISTS backups (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
+
+// CREATE TABLE IF NOT EXISTS above only applies to brand-new databases; add
+// columns introduced after a table already existed on disk.
+function ensureColumn(table, column, ddlType) {
+  const existing = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!existing.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddlType}`);
+  }
+}
+
+ensureColumn('switch_status', 'global_config_json', 'TEXT');
+ensureColumn('ports', 'stp_state', 'TEXT');
+ensureColumn('ports', 'edge_port', 'TEXT');
+ensureColumn('ports', 'lldp_profile', 'TEXT');
+ensureColumn('ports', 'speed_config', 'TEXT');
+ensureColumn('ports', 'lldp_neighbor_device', 'TEXT');
+ensureColumn('ports', 'lldp_neighbor_port_id', 'TEXT');
 
 export function nowIso() {
   return new Date().toISOString();

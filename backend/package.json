@@ -9,7 +9,8 @@
     "dev": "node --watch src/index.js",
     "mock-switch": "node src/ssh/mockSwitchServer.js",
     "seed-dev": "node src/seedDev.js",
-    "test": "node --test"
+    "test": "node --test",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
@@ -19,5 +20,8 @@
     "js-yaml": "^4.1.0",
     "ssh2": "^1.15.0",
     "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "patch-package": "^8.0.1"
   }
 }

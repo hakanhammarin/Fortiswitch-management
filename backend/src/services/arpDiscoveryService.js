@@ -1,20 +1,43 @@
 import { execSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import os from 'node:os';
 import { listMacEntries, upsertDiscovery, listDiscovery } from '../repositories.js';
 
-// Best-effort real discovery first (works when this backend runs on the
-// management LAN with the switches): the kernel neighbor/ARP table for
-// IP<->MAC, plus mDNS (avahi-browse) and NetBIOS (nbtscan) for hostnames.
-// Falls back to a clearly-labeled simulated mapping when none of those are
-// available (e.g. this sandbox, which has no LAN to broadcast on).
+// Best-effort real discovery: the switch's own ARP table, then this backend
+// host's local ARP/neighbor cache, then mDNS (avahi-browse) and NetBIOS
+// (nbtscan) for hostnames. When none of those have an answer, the MAC is
+// recorded with no IP/hostname rather than a fabricated placeholder - a
+// made-up IP that happens to look real is worse than an honest "unknown".
+
+// Both `ip neigh`'s and macOS `arp -a`'s MAC formatting can drop leading
+// zeros per octet (macOS: "4:d5:90:ba:a4:78" instead of "04:d5:..."), which
+// would silently fail to match against the switch's own zero-padded MAC
+// table entries if left un-normalized.
+function normalizeMac(mac) {
+  return mac
+    .toLowerCase()
+    .split(':')
+    .map((o) => o.padStart(2, '0'))
+    .join(':');
+}
 
 function tryArpTable() {
   try {
+    // `ip neigh show` is Linux-only (iproute2); macOS has no such command and
+    // uses BSD `arp -a` instead, with a different output format.
+    if (os.platform() === 'darwin') {
+      const out = execSync('arp -a', { timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+      const entries = [];
+      for (const line of out.split('\n')) {
+        const m = line.match(/\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F:]+)/);
+        if (m) entries.push({ ip: m[1], mac: normalizeMac(m[2]) });
+      }
+      return entries;
+    }
     const out = execSync('ip neigh show', { timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
     const entries = [];
     for (const line of out.split('\n')) {
       const m = line.match(/^(\S+)\s+.*lladdr\s+([0-9a-fA-F:]+)/);
-      if (m) entries.push({ ip: m[1], mac: m[2].toLowerCase() });
+      if (m) entries.push({ ip: m[1], mac: normalizeMac(m[2]) });
     }
     return entries;
   } catch {
@@ -48,51 +71,53 @@ function tryNetbiosNames() {
   }
 }
 
-function simulatedEntryFor(mac, portDescription, vlan) {
-  const hash = createHash('md5').update(mac).digest();
-  const subnet = { 10: 10, 20: 20, 30: 30, 99: 99 }[vlan] || 50;
-  const ip = `10.${subnet}.${hash[0]}.${hash[1] || 1}`;
-  const hostname = portDescription && portDescription.trim() ? portDescription.trim() : `host-${mac.replace(/:/g, '').slice(-6)}`;
-  return { ip, hostname, source: 'simulated (no LAN broadcast domain reachable from this backend)' };
-}
-
 /**
  * Correlates every MAC currently seen in a switch's MAC address table with an
- * IP (from ARP/neighbor discovery) and a friendly name (from mDNS/NetBIOS
- * broadcast discovery), caching results in discovery_cache. Ports carry their
- * own `description` as a fallback label when nothing was discovered on the
- * broadcast domain.
+ * IP and a friendly name, caching results in discovery_cache. IP lookup tries,
+ * in order: the switch's own ARP table (arpBySwitch - authoritative for its
+ * routed VLANs, from `get system arp`), then this backend host's local
+ * ARP/neighbor cache (only useful if it happens to share a broadcast domain
+ * with the device). Hostnames come from mDNS/NetBIOS when available, else the
+ * port's own `description`. A MAC with no real IP anywhere is recorded as
+ * such (null ip/hostname) - never a fabricated placeholder.
  */
-export function runDiscoveryCycle(portsBySwitch) {
-  const arp = tryArpTable();
+export function runDiscoveryCycle(portsBySwitch, arpBySwitch = {}) {
+  const localArpByMac = Object.fromEntries(tryArpTable().map((e) => [e.mac, e.ip]));
   const mdns = tryMdnsNames();
   const netbios = tryNetbiosNames();
-  const arpByMac = Object.fromEntries(arp.map((e) => [e.mac, e.ip]));
-
-  const allMacEntries = [];
-  for (const switchId of Object.keys(portsBySwitch)) {
-    allMacEntries.push(...listMacEntries(switchId).map((e) => ({ ...e, ports: portsBySwitch[switchId] })));
-  }
 
   const results = [];
-  for (const entry of allMacEntries) {
-    const port = entry.ports?.find((p) => p.port_name === entry.port_name || p.portName === entry.port_name);
-    const description = port?.description;
-    let ip = arpByMac[entry.mac_address];
-    let hostname = ip ? mdns[ip] || netbios[ip] : undefined;
-    let source = ip ? (hostname ? 'arp+mdns/netbios' : 'arp') : undefined;
+  for (const switchId of Object.keys(portsBySwitch)) {
+    const ports = portsBySwitch[switchId];
+    const switchArpByMac = Object.fromEntries(
+      (arpBySwitch[switchId] || []).map((e) => [normalizeMac(e.macAddress), e.ipAddress])
+    );
 
-    if (!ip) {
-      const sim = simulatedEntryFor(entry.mac_address, description, entry.vlan);
-      ip = sim.ip;
-      hostname = hostname || sim.hostname;
-      source = sim.source;
-    } else if (!hostname) {
-      hostname = description || null;
-      source = 'arp+port-description';
+    for (const entry of listMacEntries(switchId)) {
+      const port = ports?.find((p) => p.port_name === entry.port_name || p.portName === entry.port_name);
+      const description = port?.description;
+      const mac = normalizeMac(entry.mac_address);
+
+      let ip = switchArpByMac[mac];
+      let source = ip ? 'switch-arp' : undefined;
+      if (!ip) {
+        ip = localArpByMac[mac];
+        source = ip ? 'local-arp' : undefined;
+      }
+
+      let hostname = ip ? mdns[ip] || netbios[ip] : undefined;
+      if (ip && hostname) source += '+mdns/netbios';
+
+      if (!ip) {
+        hostname = description || null;
+        source = 'no discovery data';
+      } else if (!hostname) {
+        hostname = description || null;
+        source += '+port-description';
+      }
+
+      results.push({ macAddress: entry.mac_address, ipAddress: ip ?? null, hostname, discoverySource: source });
     }
-
-    results.push({ macAddress: entry.mac_address, ipAddress: ip, hostname, discoverySource: source });
   }
 
   if (results.length) upsertDiscovery(results);

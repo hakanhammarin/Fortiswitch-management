@@ -1,0 +1,65 @@
+# Desired-state template matching the as-shipped default config applied to
+# the FS108 (FortiSwitch-108E-FPOE) fleet: a flat, single-VLAN-trunk access
+# switch with three routed VLANs (100/200/300) allowed on every port, PoE
+# enabled only on the 8 built-in PoE ports (port1-port8; port9/port10 are the
+# non-PoE 1G uplinks), STP/edge-port off everywhere, and site-wide DNS/NTP
+# pinned. auto-isl/auto-network are expected explicitly disabled - this
+# switch is standalone, not FortiLink/ISL-stacked. Admin-lockout hardening
+# (fail after 10 attempts, 1s lockout) guards the admin account over SSH/GUI.
+name: fs108-default
+description: FS108 (FortiSwitch-108E-FPOE) default baseline - flat trunk, PoE on access ports only
+
+vlans:
+  required: []
+
+global:
+  switchGlobal:
+    autoIsl: disable
+  autoNetwork:
+    status: disable
+  dns:
+    primary: 192.168.1.1
+    secondary: 192.168.1.99
+  ntp:
+    server: 192.168.1.1
+    sync: enable
+  systemGlobal:
+    adminLockoutDuration: 1
+    adminLockoutThreshold: 10
+
+rules:
+  - match: "^port(9|10)$"
+    matchBy: portName
+    expect:
+      adminStatus: up
+      poeEnabled: false
+      nativeVlan: 1
+      allowedVlans: [100, 200, 300]
+      stpState: disabled
+      edgePort: disabled
+      lldpProfile: default
+      speedConfig: auto
+
+  - match: "^port[1-8]$"
+    matchBy: portName
+    expect:
+      adminStatus: up
+      poeEnabled: true
+      nativeVlan: 1
+      allowedVlans: [100, 200, 300]
+      stpState: disabled
+      edgePort: disabled
+      lldpProfile: default
+      speedConfig: auto
+
+  - match: "^internal$"
+    matchBy: portName
+    expect:
+      adminStatus: up
+      poeEnabled: false
+      nativeVlan: 1
+      allowedVlans: [100, 200, 300]
+      stpState: disabled
+      edgePort: disabled
+      lldpProfile: default
+      speedConfig: auto

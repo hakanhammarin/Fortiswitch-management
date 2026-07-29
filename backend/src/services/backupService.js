@@ -40,6 +40,20 @@ function enqueueGit(task) {
   return result;
 }
 
+// A failed CLI command (wrong syntax, session drop mid-read, pager hang) can
+// still produce text that gets passed here as "the running-config" - e.g.
+// FortiSwitchOS's own "no object in the end\nCommand fail. Return code -160"
+// for an invalid command. Silently committing that as a backup is worse than
+// not backing up at all (a real config edit could get masked behind it), so
+// anything that isn't recognizably a config dump is rejected instead of saved.
+const CLI_ERROR_MARKERS = [/Command fail\. Return code/i, /command parse error/i, /no object in the end/i];
+
+function looksLikeValidConfig(text) {
+  if (typeof text !== 'string' || !text.trim()) return false;
+  if (CLI_ERROR_MARKERS.some((re) => re.test(text))) return false;
+  return /^config \S/m.test(text);
+}
+
 /**
  * Writes a switch's full running-config to a dedicated git repository (kept
  * separate from the application's own source repo) and commits it. Every
@@ -47,6 +61,12 @@ function enqueueGit(task) {
  * diffable audit trail of every switch's configuration over time.
  */
 export async function backupSwitchConfig(switchName, runningConfig, reason) {
+  if (!looksLikeValidConfig(runningConfig)) {
+    throw new Error(
+      `refusing to back up ${switchName}: captured text doesn't look like a valid running-config ` +
+        `(got: ${JSON.stringify(String(runningConfig).slice(0, 120))})`
+    );
+  }
   return enqueueGit(async () => {
     await ensureRepo();
     const dir = path.join(BACKUP_REPO_DIR, safeFileName(switchName));
@@ -79,17 +99,32 @@ export function getBackupHistory(switchId) {
   return listBackups(switchId);
 }
 
-export async function getConfigAtCommit(switchName, commitHash) {
+// Finds the running-config path actually present in a given commit, rather
+// than assuming it from the switch's *current* name - a switch rename moves
+// its backups to a new folder going forward (see renameSwitch in
+// configService.js), so a commit made before a rename lives under the old
+// name and would be unreachable if looked up by the current one instead.
+async function findConfigPath(commitHash) {
+  const { stdout } = await git(['show', '--name-only', '--pretty=format:', commitHash]);
+  const relPath = stdout
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.endsWith('running-config.conf'));
+  if (!relPath) throw new Error(`no running-config.conf found in commit ${commitHash}`);
+  return relPath;
+}
+
+export async function getConfigAtCommit(commitHash) {
   await ensureRepo();
-  const relPath = path.join(safeFileName(switchName), 'running-config.conf');
+  const relPath = await findConfigPath(commitHash);
   const { stdout } = await git(['show', `${commitHash}:${relPath}`]);
   return stdout;
 }
 
-export async function diffCommits(switchName, fromHash, toHash) {
+export async function diffCommits(fromHash, toHash) {
   await ensureRepo();
-  const relPath = path.join(safeFileName(switchName), 'running-config.conf');
-  const { stdout } = await git(['diff', fromHash, toHash, '--', relPath]);
+  const [fromPath, toPath] = await Promise.all([findConfigPath(fromHash), findConfigPath(toHash)]);
+  const { stdout } = await git(['diff', `${fromHash}:${fromPath}`, `${toHash}:${toPath}`]);
   return stdout;
 }
 

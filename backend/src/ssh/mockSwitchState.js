@@ -43,6 +43,10 @@ export function createDefaultState({ name = 'FS-MOCK-01', model = 'FortiSwitch-1
       poeWatts: hasDevice ? Number((3 + (i % 5) * 2.7).toFixed(1)) : 0,
       poeClass: hasDevice ? `class${1 + (i % 4)}` : null,
       description: isUplink ? 'uplink-to-core' : hasDevice ? `${MAC_POOL_HOSTS[i - 1]}` : '',
+      stpState: 'disabled',
+      edgePort: 'disabled',
+      lldpProfile: 'default',
+      speedConfig: 'auto',
     });
   }
 
@@ -69,9 +73,84 @@ export function createDefaultState({ name = 'FS-MOCK-01', model = 'FortiSwitch-1
     vlans,
     ports,
     macEntries,
+    // Site-wide settings, left unset (null) by default like a factory-default
+    // real switch - `show` only prints non-default values.
+    globalConfig: {
+      switchGlobal: { autoIsl: null },
+      autoNetwork: { status: null },
+      dns: { primary: null, secondary: null },
+      ntp: { server: null, sync: null },
+    },
   };
 }
 
+// `show full-configuration switch interface` - native-vlan/allowed-vlans/
+// description/stp-state/edge-port.
+export function renderInterfaceConfig(state) {
+  const lines = ['config switch interface'];
+  for (const p of state.ports) {
+    lines.push(`    edit "${p.portName}"`);
+    lines.push(`        set description '${p.description || ''}'`);
+    lines.push(`        set native-vlan ${p.nativeVlan}`);
+    if (p.allowedVlans?.length) lines.push(`        set allowed-vlans ${p.allowedVlans.join(',')}`);
+    lines.push(`        set stp-state ${p.stpState || 'enabled'}`);
+    lines.push(`        set edge-port ${p.edgePort || 'disabled'}`);
+    lines.push('    next');
+  }
+  lines.push('end');
+  return lines.join('\n');
+}
+
+// `show full-configuration switch physical-port` - admin-status/PoE/lldp-profile/speed.
+export function renderPhysicalPortConfig(state) {
+  const lines = ['config switch physical-port'];
+  for (const p of state.ports) {
+    lines.push(`    edit "${p.portName}"`);
+    lines.push(`        set poe-status ${p.poeEnabled ? 'enable' : 'disable'}`);
+    lines.push(`        set status ${p.adminStatus}`);
+    if (p.lldpProfile) lines.push(`        set lldp-profile "${p.lldpProfile}"`);
+    lines.push(`        set speed ${p.speedConfig || 'auto'}`);
+    lines.push('    next');
+  }
+  lines.push('end');
+  return lines.join('\n');
+}
+
+// `config switch global` / `config switch auto-network` / `config system
+// dns` / `config system ntp` - only rendered when explicitly set, mirroring
+// real FortiSwitchOS's `show` (non-default values only).
+function renderGlobalConfig(state) {
+  const g = state.globalConfig || {};
+  const lines = [];
+  lines.push('config switch global');
+  if (g.switchGlobal?.autoIsl) lines.push(`    set auto-isl ${g.switchGlobal.autoIsl}`);
+  lines.push('end');
+  lines.push('');
+  lines.push('config switch auto-network');
+  if (g.autoNetwork?.status) lines.push(`    set status ${g.autoNetwork.status}`);
+  lines.push('end');
+  lines.push('');
+  lines.push('config system dns');
+  if (g.dns?.primary) lines.push(`    set primary ${g.dns.primary}`);
+  if (g.dns?.secondary) lines.push(`    set secondary ${g.dns.secondary}`);
+  lines.push('end');
+  lines.push('');
+  lines.push('config system ntp');
+  if (g.ntp?.server) {
+    lines.push('    config ntpserver');
+    lines.push('        edit 1');
+    lines.push(`            set server "${g.ntp.server}"`);
+    lines.push('        next');
+    lines.push('    end');
+  }
+  if (g.ntp?.sync) lines.push(`    set ntpsync ${g.ntp.sync}`);
+  lines.push('end');
+  return lines.join('\n');
+}
+
+// Bare `show` - full non-default config, combining both port-config scopes,
+// the switch-level VLAN objects, and site-wide settings. Only used for the
+// git backup snapshot and for re-reading global config after an enforce.
 export function renderRunningConfig(state) {
   const lines = [];
   lines.push('#config-version=' + state.model.toLowerCase() + '-7.4.4-FW-build0668-240101:opmode=0:vdom=0');
@@ -85,16 +164,10 @@ export function renderRunningConfig(state) {
   }
   lines.push('end');
   lines.push('');
-  lines.push('config switch interface');
-  for (const p of state.ports) {
-    lines.push(`    edit "${p.portName}"`);
-    lines.push(`        set native-vlan ${p.nativeVlan}`);
-    if (p.allowedVlans?.length) lines.push(`        set allowed-vlans ${p.allowedVlans.join(',')}`);
-    lines.push(`        set poe-status ${p.poeEnabled ? 'enable' : 'disable'}`);
-    if (p.description) lines.push(`        set description "${p.description}"`);
-    lines.push(`        set status ${p.adminStatus}`);
-    lines.push('    next');
-  }
-  lines.push('end');
+  lines.push(renderPhysicalPortConfig(state));
+  lines.push('');
+  lines.push(renderInterfaceConfig(state));
+  lines.push('');
+  lines.push(renderGlobalConfig(state));
   return lines.join('\n');
 }

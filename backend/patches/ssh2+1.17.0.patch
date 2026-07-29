@@ -1,0 +1,23 @@
+diff --git a/node_modules/ssh2/lib/client.js b/node_modules/ssh2/lib/client.js
+index 7291c2c..d16b5ce 100644
+--- a/node_modules/ssh2/lib/client.js
++++ b/node_modules/ssh2/lib/client.js
+@@ -509,12 +509,12 @@ class Client extends EventEmitter {
+         GLOBAL_REQUEST: (p, name, wantReply, data) => {
+           switch (name) {
+             case 'hostkeys-00@openssh.com':
+-              // Automatically verify keys before passing to end user
+-              hostKeysProve(this, data, (err, keys) => {
+-                if (err)
+-                  return;
+-                this.emit('hostkeys', keys);
+-              });
++              // Some vendor SSH servers (observed on FortiSwitchOS) advertise
++              // this OpenSSH extension but kill the session on the next
++              // channel request once we reply with hostkeys-prove-00. This
++              // app never verifies host keys via known_hosts anyway, so the
++              // proof round-trip buys us nothing - skip it entirely instead
++              // of calling hostKeysProve().
+               if (wantReply)
+                 proto.requestSuccess();
+               break;
